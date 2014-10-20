@@ -2,6 +2,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 import Control.Applicative
+import Control.Monad.Catch
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.ByteString (ByteString)
@@ -58,7 +59,9 @@ runMain _myId local server = loop
                                msg <- receiveMulti server
                                when (length msg /= 2) $
                                  log $ "Malformed message from server: " ++ show msg
-                               sendMulti local $ NE.fromList msg
+                               sendMulti local (NE.fromList msg)
+                                 `catch` (\e ->
+                                           log $ "send local failed: " ++ show (e :: ZMQError) ++ ", msg=" ++ show msg)
                            )
         ]
       loop
