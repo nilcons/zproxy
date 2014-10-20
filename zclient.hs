@@ -16,6 +16,7 @@ import System.ZMQ4.Monadic
 defineFlag "port" ("5500" :: String) "Local port to listen on."
 defineFlag "server" ("vidra.nilcons.com:5577" :: String) "Server endpoint."
 defineFlag "timeout" (5000 :: Int) "Timeout (milliseconds)."
+$(return [])
 
 timeout :: Timeout
 timeout = fromIntegral flags_timeout
@@ -70,9 +71,16 @@ log msg = liftIO $ putStrLn msg
 
 main :: IO ()
 main = runZMQ $ do
+  [] <- liftIO $ $initHFlags "zproxy client"
+
   local <- socket Stream
   setIpv6 True local
+  -- TODO(klao): this doesn't actually listen on [::1]. :(
   bind local $ "tcp://lo:" ++ flags_port
+
+  -- forever $ do
+  --   msg <- receiveMulti local
+  --   log $ "Received: " ++ show msg
 
   -- TODO(klao): security implications?
   myId <- liftIO $ BS.pack <$> replicateM 8 (randomRIO (65,122))
