@@ -1,0 +1,9 @@
+*~
+*.o
+*.hi
+*.chi
+*.chs.h
+/dist
+/.cabal-sandbox
+/cabal.sandbox.config
+/cabal.config
