@@ -35,7 +35,10 @@ runMain :: Socket z Stream -> Socket z Router
 runMain local clients =
   \remoteIds localRemotes connStates -> loop (remoteIds, localRemotes, connStates)
   where
-    loop stateMaps = do
+    loop stateMaps@(_, _, connStates) = do
+      forM_ (M.toList connStates) $ \(rId, ConnState nextRemote unconfirmed) -> do
+        log $ "rId=" ++ show rId ++ ", nextRemote=" ++ show nextRemote
+          ++ ", unconfirmed: " ++ show (_snFirst unconfirmed, nextIx unconfirmed)
       [evl, evr] <- poll (-1) [Sock local [In] Nothing, Sock clients [In] Nothing]
       stateMaps' <- if null evl
                     then return stateMaps

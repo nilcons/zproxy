@@ -88,6 +88,8 @@ runMain myId local server ixRemote0 unconfirmed0 = do
   where
     loop :: ClientState -> ZMQ z r
     loop cState0@(CS ixRemote unconfirmed hClock) = do
+      log $ "Unconfirmed: " ++ show (_snFirst unconfirmed, nextIx unconfirmed)
+        ++ ", ixRemote=" ++ show ixRemote
       hbs <- checkHeartBeat hClock
       hClock' <- case hbs of
         HBOK -> return hClock
