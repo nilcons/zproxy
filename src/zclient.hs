@@ -2,6 +2,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+import Control.Concurrent (threadDelay)
 import           Control.Applicative
 import           Control.Lens hiding (ix)
 import           Control.Monad
@@ -22,15 +23,16 @@ defineFlag "port" ("5500" :: String) "Local port to listen on."
 defineFlag "server" ("vidra.nilcons.com:5577" :: String) "Server endpoint."
 $(return [])
 
-connectAndRun :: ByteString -> Socket z Stream -> Int -> Seqn [ByteString] -> ZMQ z r
+connectAndRun :: forall z r. ByteString -> Socket z Stream
+              -> Int -> Seqn [ByteString]
+              -> ZMQ z r
 connectAndRun myId local ixRemote unconfirmed = do
-  server <- socket Dealer
-  setIpv6 True server
-  setIdentity (restrict myId) server
-  connect server $ "tcp://" ++ flags_server
-
+  server <- connectServer
+  log "Sending Helo"
   send server [] $ ctrlFrame unconfirmed ixRemote $ Helo myId
+  log "Waiting for Helo response"
   [evs] <- poll timeout [Sock server [In] Nothing]
+  log "Processing Helo response"
   if null evs
     then close server >> reconnect
     else do
@@ -51,6 +53,23 @@ connectAndRun myId local ixRemote unconfirmed = do
       forM_ (toIndexed unconfirmed') $ \(ix,msg) -> do
         sendMsg server ixRemote ix msg
       runMain myId local server ixRemote unconfirmed'
+
+    connectServer :: ZMQ z (Socket z Dealer)
+    connectServer = do
+      server <- socket Dealer
+      setIpv6 True server
+      -- This is important: we want new identity on every reconnect to
+      -- simplify the processing. (We don't want to process old
+      -- messages from the remote's queue.)
+      -- NO: setIdentity (restrict myId) server
+      (connect server ("tcp://" ++ flags_server) >> return server)
+        `catch` (\e -> do
+                    log $ "connect failed: " ++ show (e :: ZMQError)
+                    close server
+                    liftIO $ threadDelay 2000000
+                    log "Retrying connect"
+                    connectServer
+                )
 
 
 data ClientState

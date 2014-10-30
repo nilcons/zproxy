@@ -86,7 +86,7 @@ runMain local clients =
           st' = ConnState nextRemote unconfirmed'
           connStates' = M.insert rId st' connStates
           heloRep = ZCtrl (Helo "") ixAck nextRemote
-      assert (ixRemote >= nextRemote) "Reconnect: ixRemote < nextRemote"
+      assert (ixRemote >= nextRemote) $ "Reconnect: ixRemote < nextRemote" ++ show (ixRemote, nextRemote)
       assert (ixAck >= _snFirst unconfirmed) "Reconnect: ixAck < unconfirmed"
       assert (ixAck <= nextIx unconfirmed) "Reconnect: ixAck > unconfirmed"
       sendMulti clients $ routeAddr :| [encodeS heloRep]
