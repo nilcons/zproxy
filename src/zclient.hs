@@ -34,7 +34,7 @@ connectAndRun myId local ixRemote unconfirmed = do
   [evs] <- poll timeout [Sock server [In] Nothing]
   log "Processing Helo response"
   if null evs
-    then close server >> reconnect
+    then closeImmediately server >> reconnect
     else do
     msg <- receiveMulti server
     case msg of
@@ -65,7 +65,7 @@ connectAndRun myId local ixRemote unconfirmed = do
       (connect server ("tcp://" ++ flags_server) >> return server)
         `catch` (\e -> do
                     log $ "connect failed: " ++ show (e :: ZMQError)
-                    close server
+                    closeImmediately server
                     liftIO $ threadDelay 2000000
                     log "Retrying connect"
                     connectServer
@@ -99,7 +99,7 @@ runMain myId local server ixRemote0 unconfirmed0 = do
           heartBeatResetPing hClock
         HBExpired -> do
           log "Reconnecting"
-          close server
+          closeImmediately server
           connectAndRun myId local ixRemote unconfirmed
       let cState1 = cState0{ _csHeartClock = hClock' }
 
@@ -147,6 +147,11 @@ sendMsg :: Socket z Dealer -> Int -> Int -> [ByteString] -> ZMQ z ()
 sendMsg server ixRemote ix msg = sendMulti server $ encodeS ctrl :| msg
   where
     ctrl = ZCtrl Mesg ix ixRemote
+
+closeImmediately :: Socket z t -> ZMQ z ()
+closeImmediately s = do
+  setLinger (restrict (0::Int)) s
+  close s
 
 main :: IO ()
 main = runZMQ $ do
