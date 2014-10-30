@@ -15,17 +15,12 @@ import           Prelude hiding (log)
 import           System.Random
 import           System.ZMQ4.Monadic
 
+import           HeartBeat
 import           Lib
 
 defineFlag "port" ("5500" :: String) "Local port to listen on."
 defineFlag "server" ("vidra.nilcons.com:5577" :: String) "Server endpoint."
-defineFlag "timeout" (5000 :: Int) "Timeout (milliseconds)."
 $(return [])
-
-timeout :: Timeout
-timeout = fromIntegral flags_timeout
-
-
 
 connectAndRun :: ByteString -> Socket z Stream -> Int -> Seqn [ByteString] -> ZMQ z r
 connectAndRun myId local ixRemote unconfirmed = do
@@ -61,26 +56,40 @@ connectAndRun myId local ixRemote unconfirmed = do
 data ClientState
   = CS { _csNextRemote :: {-# UNPACK #-} !Int
        , _csUnconfirmed :: !(Seqn [BS.ByteString])
-       , _csHeartClock :: !()
+       , _csHeartClock :: !HeartBeat
        } deriving (Show)
 
 runMain :: forall z r. ByteString
            -> Socket z Stream -> Socket z Dealer
            -> Int -> Seqn [ByteString]
            -> ZMQ z r
-runMain _myId local server ixRemote0 unconfirmed0 = loop $ CS ixRemote0 unconfirmed0 ()
+runMain myId local server ixRemote0 unconfirmed0 = do
+  hClock <- heartBeatReset
+  loop $ CS ixRemote0 unconfirmed0 hClock
   where
     loop :: ClientState -> ZMQ z r
-    loop cState = do
+    loop cState0@(CS ixRemote unconfirmed hClock) = do
+      hbs <- checkHeartBeat hClock
+      hClock' <- case hbs of
+        HBOK -> return hClock
+        HBSendPing -> do
+          log "Sending Ping"
+          send server [] $ ctrlFrame unconfirmed ixRemote Ping
+          heartBeatResetPing hClock
+        HBExpired -> do
+          log "Reconnecting"
+          connectAndRun myId local ixRemote unconfirmed
+      let cState1 = cState0{ _csHeartClock = hClock' }
+
       [evl, evs] <- poll (-1) [ Sock local [In] Nothing
                               , Sock server [In] Nothing ]
-      cState'  <- if null evl
-                  then return cState
-                  else handleLocal cState
-      cState'' <- if null evs
-                  then return cState'
-                  else handleServer cState'
-      loop cState''
+      cState2 <- if null evl
+                  then return cState1
+                  else handleLocal cState1
+      cState3 <- if null evs
+                  then return cState2
+                  else handleServer cState2
+      loop cState3
 
     handleLocal (CS ixRemote unconfirmed hClock) = do
       msg <- receiveMulti local
@@ -90,8 +99,8 @@ runMain _myId local server ixRemote0 unconfirmed0 = loop $ CS ixRemote0 unconfir
       sendMsg server ixRemote ix msg
       return $ CS ixRemote unconfirmed' hClock
 
-    handleServer (CS ixRemote unconfirmed hClock) = do
-      hClock' <- return hClock -- resetHeartBeat hClock
+    handleServer (CS ixRemote unconfirmed _hClock) = do
+      hClock' <- heartBeatReset
       (hdr : msg) <- receiveMulti server
       mctrl <- decodeOrLog hdr
       case mctrl of
