@@ -97,6 +97,11 @@ runMain _myId local server = loop
 
         _ -> loop ixRemote unconfirmed
 
+sendMsg :: Socket z Dealer -> Int -> Int -> [ByteString] -> ZMQ z ()
+sendMsg server ixRemote ix msg = sendMulti server $ encodeS ctrl :| msg
+  where
+    ctrl = ZCtrl Mesg ix ixRemote
+
 main :: IO ()
 main = runZMQ $ do
   [] <- liftIO $ $initHFlags "zproxy client"
