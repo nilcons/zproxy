@@ -78,11 +78,13 @@ runMain myId local server ixRemote0 unconfirmed0 = do
           heartBeatResetPing hClock
         HBExpired -> do
           log "Reconnecting"
+          close server
           connectAndRun myId local ixRemote unconfirmed
       let cState1 = cState0{ _csHeartClock = hClock' }
 
-      [evl, evs] <- poll (-1) [ Sock local [In] Nothing
-                              , Sock server [In] Nothing ]
+      [evl, evs] <- poll ping_timeout
+                    [ Sock local [In] Nothing
+                    , Sock server [In] Nothing ]
       cState2 <- if null evl
                   then return cState1
                   else handleLocal cState1
