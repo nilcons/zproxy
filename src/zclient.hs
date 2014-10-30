@@ -57,45 +57,59 @@ connectAndRun myId local ixRemote unconfirmed = do
         sendMsg server ixRemote ix msg
       runMain myId local server ixRemote unconfirmed'
 
+
+data ClientState
+  = CS { _csNextRemote :: {-# UNPACK #-} !Int
+       , _csUnconfirmed :: !(Seqn [BS.ByteString])
+       , _csHeartClock :: !()
+       } deriving (Show)
+
 runMain :: forall z r. ByteString
            -> Socket z Stream -> Socket z Dealer
            -> Int -> Seqn [ByteString]
            -> ZMQ z r
-runMain _myId local server = loop
+runMain _myId local server ixRemote0 unconfirmed0 = loop $ CS ixRemote0 unconfirmed0 ()
   where
-    loop :: Int -> Seqn [ByteString] -> ZMQ z r
-    loop ixRemote unconfirmed = do
+    loop :: ClientState -> ZMQ z r
+    loop cState = do
       [evl, evs] <- poll (-1) [ Sock local [In] Nothing
                               , Sock server [In] Nothing ]
-      case (null evl, null evs) of
-        (False, _) -> do
-          msg <- receiveMulti local
-          assert (length msg == 2) "Malformed message from local"
-          let ix = nextIx unconfirmed
-              unconfirmed' = unconfirmed |> msg
-          sendMsg server ixRemote ix msg
-          loop ixRemote unconfirmed'
+      cState'  <- if null evl
+                  then return cState
+                  else handleLocal cState
+      cState'' <- if null evs
+                  then return cState'
+                  else handleServer cState'
+      loop cState''
 
-        (_, False) -> do
-          (hdr : msg) <- receiveMulti server
-          mctrl <- decodeOrLog hdr
-          case mctrl of
-            Nothing -> logFail $ "Malformed control frame from server: " ++ show hdr
-            Just (ZCtrl Mesg ixFromRemote ixAck) -> do
-              assert (ixFromRemote == ixRemote) "Inconsistent sequence number from server"
-              assert (length msg `elem` [0,2]) $ "Malformed message from server: " ++ show msg
-              ixRemote' <- if null msg then return ixRemote
-                           else do
-                             sendMulti local (NE.fromList msg)
-                               `catch` (\e ->
-                                         log $ "send local failed: " ++ show (e :: ZMQError) ++ ", msg=" ++ show msg)
-                             return $ ixRemote + 1
+    handleLocal (CS ixRemote unconfirmed hClock) = do
+      msg <- receiveMulti local
+      assert (length msg == 2) "Malformed message from local"
+      let ix = nextIx unconfirmed
+          unconfirmed' = unconfirmed |> msg
+      sendMsg server ixRemote ix msg
+      return $ CS ixRemote unconfirmed' hClock
 
-              let unconfirmed' = dropBelow ixAck unconfirmed
-              loop ixRemote' unconfirmed'
-            Just ctrl -> logFail $ "Unexpected control frame from server: " ++ show ctrl
+    handleServer (CS ixRemote unconfirmed hClock) = do
+      hClock' <- return hClock -- resetHeartBeat hClock
+      (hdr : msg) <- receiveMulti server
+      mctrl <- decodeOrLog hdr
+      case mctrl of
+        Nothing -> logFail $ "Malformed control frame from server: " ++ show hdr
+        Just (ZCtrl Mesg ixFromRemote ixAck) -> do
+          assert (ixFromRemote == ixRemote) "Inconsistent sequence number from server"
+          assert (length msg `elem` [0,2]) $ "Malformed message from server: " ++ show msg
+          ixRemote' <- if null msg
+                       then return ixRemote -- This is a 'Pong'
+                       else do
+                         sendMulti local (NE.fromList msg)
+                           `catch` (\e ->
+                                     log $ "send local failed: " ++ show (e :: ZMQError) ++ ", msg=" ++ show msg)
+                         return $ ixRemote + 1
 
-        _ -> loop ixRemote unconfirmed
+          let unconfirmed' = dropBelow ixAck unconfirmed
+          return $ CS ixRemote' unconfirmed' hClock'
+        Just ctrl -> logFail $ "Unexpected control frame from server: " ++ show ctrl
 
 sendMsg :: Socket z Dealer -> Int -> Int -> [ByteString] -> ZMQ z ()
 sendMsg server ixRemote ix msg = sendMulti server $ encodeS ctrl :| msg
